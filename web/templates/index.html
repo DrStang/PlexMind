@@ -308,12 +308,12 @@
 </div>
 
 <div class="suggestions" id="suggestions">
-  <span class="suggestion" onclick="usePrompt(this)">🌧 Rainy day movie under 2h</span>
-  <span class="suggestion" onclick="usePrompt(this)">🎭 Best unwatched drama</span>
-  <span class="suggestion" onclick="usePrompt(this)">😂 Something funny tonight</span>
-  <span class="suggestion" onclick="usePrompt(this)">🎬 Films like Oppenheimer</span>
-  <span class="suggestion" onclick="usePrompt(this)">📺 Best show to binge this weekend</span>
-  <span class="suggestion" onclick="usePrompt(this)">⭐ Highest rated I haven't seen</span>
+  <span class="suggestion" onclick="usePrompt(this)">🌧 A good movie to watch on a rainy Sunday under 2 hours that I haven't seen</span>
+  <span class="suggestion" onclick="usePrompt(this)">😂 A funny movie or comedy I haven't watched yet</span>
+  <span class="suggestion" onclick="usePrompt(this)">🎬 Movies in my library similar to Oppenheimer</span>
+  <span class="suggestion" onclick="usePrompt(this)">⭐ The highest rated movie in my library I haven't seen</span>
+  <span class="suggestion" onclick="usePrompt(this)">📺 Best TV show in my library to binge this weekend</span>
+  <span class="suggestion" onclick="usePrompt(this)">🎭 Best unwatched drama in my library</span>
 </div>
 
 <div id="input-bar">
@@ -375,7 +375,8 @@ input.addEventListener('keydown', (e) => {
 });
 
 function usePrompt(el) {
-  input.value = el.textContent.replace(/^[^\w]+ /, '');
+  // Strip only the leading emoji character(s), keep the full descriptive text
+  input.value = el.textContent.replace(/^[\p{Emoji}\s]+/u, '').trim();
   input.focus();
 }
 

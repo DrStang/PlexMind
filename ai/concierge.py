@@ -28,7 +28,9 @@ class Concierge:
         self._cache = LibraryCache()
         self._llm = LLMClient()
         self._items: list[MediaItem] = []
-        self._system_prompt: str = ""
+        # Always initialise to a valid (if library-less) prompt so the LLM
+        # never operates as a generic assistant even if Plex hasn't synced yet.
+        self._system_prompt: str = build_system_prompt([])
         self._history: list[Message] = []
 
     # ------------------------------------------------------------------
@@ -39,14 +41,20 @@ class Concierge:
         """
         Loads library from cache; syncs from Plex if stale or forced.
         Returns the number of items in the library.
+        The system prompt is always updated, even if the sync fails, so the
+        LLM never falls back to behaving as a generic assistant.
         """
-        if force_refresh or self._cache.is_stale():
-            await self._sync_from_plex()
-        else:
-            self._items = self._cache.get_all_items()
-            logger.info("Loaded %d items from cache", len(self._items))
+        try:
+            if force_refresh or self._cache.is_stale():
+                await self._sync_from_plex()
+            else:
+                self._items = self._cache.get_all_items()
+                logger.info("Loaded %d items from cache", len(self._items))
+        finally:
+            # Rebuild prompt with whatever items we have (possibly []).
+            # This guarantees _system_prompt is never the empty string.
+            self._system_prompt = build_system_prompt(self._items)
 
-        self._system_prompt = build_system_prompt(self._items)
         return len(self._items)
 
     async def _sync_from_plex(self) -> None:
