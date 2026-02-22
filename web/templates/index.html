@@ -283,14 +283,19 @@
     <div class="sub">Your AI-powered Plex librarian</div>
   </div>
   <div class="header-actions">
-    {% if stats %}
-    <span class="stat-badge">🎬 {{ stats.movies }} movies</span>
-    <span class="stat-badge">📺 {{ stats.shows }} shows</span>
-    {% endif %}
+    <span class="stat-badge" id="lib-status">⏳ Loading…</span>
     <button class="btn" onclick="syncLibrary()">↺ Sync Library</button>
     <button class="btn" onclick="resetChat()">✕ New Chat</button>
   </div>
 </header>
+
+<!-- Warning banner shown when library is empty -->
+<div id="empty-banner" style="display:none; background:#2a1a00; border-bottom:1px solid #cc7b19; padding:10px 20px; font-size:0.82rem; color:#f0c060; flex-shrink:0;">
+  ⚠️ <strong>Library not synced.</strong>
+  PlexMind has no titles to recommend yet.
+  Make sure <code>PLEX_URL</code> and <code>PLEX_TOKEN</code> are set in your <code>.env</code> file, then click
+  <strong onclick="syncLibrary()" style="cursor:pointer;text-decoration:underline">↺ Sync Library</strong>.
+</div>
 
 <div id="chat">
   <div class="message bot">
@@ -490,6 +495,7 @@ async function syncLibrary() {
     const data = await resp.json();
     if (data.status === 'ok') {
       showToast(`✓ Synced ${data.items} items from Plex`);
+      updateLibraryStatus();
     } else {
       showToast(`⚠️ ${data.detail}`);
     }
@@ -497,6 +503,30 @@ async function syncLibrary() {
     showToast('⚠️ Sync failed — check connection');
   }
 }
+
+async function updateLibraryStatus() {
+  const badge = document.getElementById('lib-status');
+  const banner = document.getElementById('empty-banner');
+  try {
+    const resp = await fetch('/library/stats');
+    const data = await resp.json();
+    if (data.total > 0) {
+      badge.textContent = `✓ ${data.movies} movies · ${data.shows} shows loaded`;
+      badge.style.color = '#6be06b';
+      banner.style.display = 'none';
+    } else {
+      badge.textContent = '⚠️ Library empty — sync needed';
+      badge.style.color = '#f0c060';
+      banner.style.display = 'block';
+    }
+  } catch (e) {
+    badge.textContent = '⚠️ Cannot reach server';
+    badge.style.color = '#f06060';
+  }
+}
+
+// Check library status on page load
+updateLibraryStatus();
 
 function showToast(msg) {
   const t = document.getElementById('toast');

@@ -8,7 +8,8 @@ from cache.store import LibraryCache
 from config import Config
 from plex.models import MediaItem
 from ai.llm import LLMClient, Message
-from ai.prompts import build_system_prompt
+from ai.prompts import build_system_prompt, build_grounded_message
+from ai.filter import filter_library
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,27 @@ class Concierge:
         user_message: str,
         stream: bool = True,
     ) -> AsyncIterator[str]:
-        """Send a message and yield streamed response chunks."""
-        self._history.append({"role": "user", "content": user_message})
+        """
+        Send a message and yield streamed response chunks.
+
+        Before calling the LLM, the library is pre-filtered for this query
+        and the relevant titles are injected directly into the user message.
+        This "grounded message" approach is far more reliable than putting
+        the entire library in the system prompt and hoping the model ignores
+        nothing — models pay close attention to context in the user turn.
+        """
+        # Pre-filter to the most relevant titles for this specific query
+        candidates = filter_library(self._items, user_message)
+        grounded = build_grounded_message(user_message, candidates)
+
+        logger.debug(
+            "Query '%s...' → %d candidates from %d items",
+            user_message[:60], len(candidates), len(self._items),
+        )
+
+        # Store the original (human-readable) message in history so follow-up
+        # turns read naturally, but send the grounded version to the LLM.
+        self._history.append({"role": "user", "content": grounded})
 
         full_response = []
         async for chunk in self._llm.chat(
