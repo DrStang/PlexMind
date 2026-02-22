@@ -23,3 +23,4 @@ class Config:
     # Web
     WEB_HOST: str = os.getenv("WEB_HOST", "0.0.0.0")
     WEB_PORT: int = int(os.getenv("WEB_PORT", "7432"))
+    SESSION_SECRET: str = os.getenv("SESSION_SECRET", "")

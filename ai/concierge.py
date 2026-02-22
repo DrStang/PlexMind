@@ -90,18 +90,17 @@ class Concierge:
         self,
         user_message: str,
         stream: bool = True,
+        watch_overlay: dict[int, dict] | None = None,
     ) -> AsyncIterator[str]:
         """
         Send a message and yield streamed response chunks.
 
-        Before calling the LLM, the library is pre-filtered for this query
-        and the relevant titles are injected directly into the user message.
-        This "grounded message" approach is far more reliable than putting
-        the entire library in the system prompt and hoping the model ignores
-        nothing — models pay close attention to context in the user turn.
+        watch_overlay — per-user {rating_key: {watched, watch_count}} dict
+        fetched at login from the user's own Plex token.  When supplied it
+        replaces the shared library's watched status so recommendations are
+        personalised to that user.
         """
-        # Pre-filter to the most relevant titles for this specific query
-        candidates = filter_library(self._items, user_message)
+        candidates = filter_library(self._items, user_message, watch_overlay=watch_overlay)
         grounded = build_grounded_message(user_message, candidates)
 
         logger.debug(

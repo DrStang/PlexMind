@@ -98,16 +98,29 @@ def filter_library(
     items: list[MediaItem],
     query: str,
     max_results: int = 50,
+    watch_overlay: dict[int, dict] | None = None,
 ) -> list[MediaItem]:
     """
     Score and rank items against the query.  Hard-exclude items that
     violate explicit filters (duration, watch status, media type).
     Return the top max_results by score.
+
+    watch_overlay — optional per-user dict {rating_key: {watched, watch_count}}
+    that overrides the shared library's watched state with the signed-in
+    user's actual view history.
     """
     if not items:
         return []
 
     q = query.lower()
+
+    def _watched(item: MediaItem) -> bool:
+        """Resolve watched status: user overlay takes priority over shared cache."""
+        if watch_overlay and item.rating_key:
+            entry = watch_overlay.get(item.rating_key)
+            if entry is not None:
+                return entry["watched"]
+        return item.watched
 
     max_minutes = _parse_duration(q)
     want_unwatched = any(sig in q for sig in _UNWATCHED_SIGNALS)
@@ -134,9 +147,10 @@ def filter_library(
         if max_minutes and item.duration_minutes:
             if item.duration_minutes > max_minutes:
                 continue
-        if want_unwatched and item.watched:
+        item_watched = _watched(item)
+        if want_unwatched and item_watched:
             continue
-        if want_watched and not item.watched:
+        if want_watched and not item_watched:
             continue
 
         # ── Scoring ──────────────────────────────────────────────────
@@ -164,7 +178,7 @@ def filter_library(
                     score += 8
 
         # Prefer unwatched when user hasn't said they want rewatches
-        if not want_watched and not item.watched:
+        if not want_watched and not item_watched:
             score += 4
 
         # Rating bonus (0–10 → adds up to 10 points)

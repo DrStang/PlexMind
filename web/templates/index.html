@@ -87,6 +87,32 @@
     font-weight: 600;
   }
   .btn.accent:hover { background: var(--accent2); }
+  .btn.plex-btn {
+    background: #e5a00d;
+    color: #000;
+    border-color: #e5a00d;
+    font-weight: 600;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .btn.plex-btn:hover { background: #cc7b19; }
+
+  /* ── User avatar pill ── */
+  .user-pill {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px 3px 3px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .user-pill:hover { border-color: var(--accent); }
+  .user-pill img {
+    width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
+  }
+  .user-pill .user-name { color: var(--text); font-weight: 500; }
+  .user-pill .sign-out  { color: var(--muted); font-size: 0.7rem; }
 
   /* ── Chat area ── */
   #chat {
@@ -318,6 +344,19 @@
   }
   .badge-watched { background: #1a3a1a; color: #6be06b; }
   .badge-unwatched { background: #1a2a3a; color: #6aabdf; }
+  .watchlist-btn {
+    display: block; width: 100%; margin-top: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 0.68rem; font-weight: 600;
+    padding: 4px 0; cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    text-align: center;
+  }
+  .watchlist-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+  .watchlist-btn.added { background: #1a3a1a; color: #6be06b; border-color: #2a5a2a; }
 
   /* ── Sync toast ── */
   #toast {
@@ -348,8 +387,19 @@
   </div>
   <div class="header-actions">
     <span class="stat-badge" id="lib-status">⏳ Loading…</span>
-    <button class="btn" onclick="syncLibrary()">↺ Sync Library</button>
+    <button class="btn" onclick="syncLibrary()">↺ Sync</button>
     <button class="btn" onclick="resetChat()">✕ New Chat</button>
+    <!-- Shown when signed out -->
+    <button class="btn plex-btn" id="signin-btn" onclick="plexSignIn()" title="Sign in with your Plex account for personalised watch status">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+      Sign in with Plex
+    </button>
+    <!-- Shown when signed in -->
+    <div class="user-pill" id="user-pill" style="display:none" onclick="plexSignOut()" title="Click to sign out">
+      <img id="user-avatar" src="" alt=""/>
+      <span class="user-name" id="user-name"></span>
+      <span class="sign-out">sign out</span>
+    </div>
   </div>
 </header>
 
@@ -423,8 +473,10 @@ function renderMarkdown(text) {
 }
 
 // ── Plex integration state ────────────────────────────────────────────
-let titleMap = {};      // title_lower → {title, year, media_type, watched, thumb_url, rating_key}
-let plexMachineId = ''; // Plex server machine identifier
+let titleMap  = {};   // title_lower → {title, year, media_type, watched, thumb_url, rating_key}
+let plexWebUrl = '';  // e.g. http://localhost:32400/web
+let plexMachineId = '';
+let currentUser = null; // {username, thumb, token, watch_overlay_loaded}
 
 async function loadPlexIntegration() {
   try {
@@ -436,16 +488,101 @@ async function loadPlexIntegration() {
     if (serverResp.ok) {
       const s = await serverResp.json();
       plexMachineId = s.machine_id || '';
+      plexWebUrl    = s.plex_web_url || '';
     }
   } catch (e) { /* Plex integration optional */ }
 }
 
 function plexDeepLink(ratingKey) {
   if (!ratingKey) return null;
-  if (plexMachineId) {
-    return `https://app.plex.tv/desktop/#!/server/${plexMachineId}/details?key=/library/metadata/${ratingKey}`;
+  // Use local Plex web URL — always works on the same network, no cloud relay needed
+  if (plexWebUrl && plexMachineId) {
+    return `${plexWebUrl}/#!/server/${plexMachineId}/details?key=/library/metadata/${ratingKey}`;
   }
   return null;
+}
+
+// ── Plex OAuth sign-in ─────────────────────────────────────────────
+async function plexSignIn() {
+  try {
+    const resp = await fetch('/auth/login', { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('⚠️ ' + data.error); return; }
+
+    // Open auth URL in a small popup
+    const popup = window.open(data.auth_url, 'plex-auth',
+      'width=700,height=600,toolbar=0,menubar=0,location=0');
+
+    // Poll for completion
+    const pinId = data.pin_id;
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
+      if (attempts > 90) { clearInterval(interval); popup?.close(); return; } // 3-min timeout
+      try {
+        const pr = await fetch(`/auth/poll/${pinId}`);
+        const pd = await pr.json();
+        if (pd.status === 'ok') {
+          clearInterval(interval);
+          popup?.close();
+          currentUser = pd;
+          updateUserUI(pd);
+          showToast(`✓ Signed in as ${pd.username} — personalising your recommendations…`);
+          // Refresh title map (watched status may now differ per-user)
+          await loadPlexIntegration();
+        }
+      } catch (_) {}
+    }, 2000);
+  } catch (e) {
+    showToast('⚠️ Sign-in failed: ' + e.message);
+  }
+}
+
+async function plexSignOut() {
+  await fetch('/auth/logout', { method: 'POST' });
+  currentUser = null;
+  updateUserUI(null);
+  showToast('Signed out');
+}
+
+function updateUserUI(user) {
+  const signinBtn = document.getElementById('signin-btn');
+  const userPill  = document.getElementById('user-pill');
+  const userName  = document.getElementById('user-name');
+  const userAvatar= document.getElementById('user-avatar');
+  if (user) {
+    signinBtn.style.display = 'none';
+    userPill.style.display  = 'flex';
+    userName.textContent    = user.username || 'Plex User';
+    userAvatar.src          = user.thumb || '';
+    userAvatar.style.display= user.thumb ? 'block' : 'none';
+  } else {
+    signinBtn.style.display = '';
+    userPill.style.display  = 'none';
+  }
+}
+
+// ── Watchlist ─────────────────────────────────────────────────────
+async function toggleWatchlist(btn, ratingKey) {
+  if (!currentUser) { showToast('Sign in with Plex to use watchlist'); return; }
+  const adding = !btn.classList.contains('added');
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/plex/watchlist/${ratingKey}`, {
+      method: adding ? 'POST' : 'DELETE',
+    });
+    const data = await resp.json();
+    if (data.error) { showToast('⚠️ ' + data.error); }
+    else {
+      btn.classList.toggle('added', adding);
+      btn.textContent = adding ? '✓ In Watchlist' : '+ Watchlist';
+      showToast(adding ? '✓ Added to watchlist' : 'Removed from watchlist');
+    }
+  } catch (e) {
+    showToast('⚠️ Watchlist error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function buildMediaCards(mentionedTitles) {
@@ -485,6 +622,15 @@ function buildMediaCards(mentionedTitles) {
       <span class="media-card-badge ${item.watched ? 'badge-watched' : 'badge-unwatched'}">
         ${item.watched ? '✓ Watched' : '● New'}
       </span>`;
+
+    // Watchlist button (only meaningful when signed in, but always rendered)
+    if (item.rating_key) {
+      const wlBtn = document.createElement('button');
+      wlBtn.className = 'watchlist-btn';
+      wlBtn.textContent = '+ Watchlist';
+      wlBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleWatchlist(wlBtn, item.rating_key); };
+      info.appendChild(wlBtn);
+    }
 
     card.appendChild(poster);
     card.appendChild(info);
@@ -685,9 +831,18 @@ async function updateLibraryStatus() {
   }
 }
 
-// Check library status and load Plex integration on page load
-updateLibraryStatus();
-loadPlexIntegration();
+// Check library status, restore session, load Plex integration on page load
+(async () => {
+  await Promise.all([updateLibraryStatus(), loadPlexIntegration()]);
+  // Restore signed-in user from server session
+  try {
+    const r = await fetch('/auth/me');
+    if (r.ok) {
+      currentUser = await r.json();
+      updateUserUI(currentUser);
+    }
+  } catch (_) {}
+})();
 
 function showToast(msg) {
   const t = document.getElementById('toast');

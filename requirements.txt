@@ -8,3 +8,4 @@ rich>=13.7.0
 typer>=0.12.0
 jinja2>=3.1.0
 aiofiles>=24.1.0
+itsdangerous>=2.1.0
