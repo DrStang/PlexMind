@@ -35,7 +35,9 @@ app = FastAPI(title="PlexMind Concierge", lifespan=lifespan)
 
 import pathlib
 _BASE = pathlib.Path(__file__).parent
-app.mount("/static", StaticFiles(directory=str(_BASE / "static")), name="static")
+_STATIC = _BASE / "static"
+_STATIC.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 templates = Jinja2Templates(directory=str(_BASE / "templates"))
 
 
