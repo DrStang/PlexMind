@@ -34,6 +34,10 @@ class PlexClient:
     def server_name(self) -> str:
         return self._server.friendlyName
 
+    @property
+    def machine_identifier(self) -> str:
+        return self._server.machineIdentifier
+
     # ------------------------------------------------------------------
     # Library fetching
     # ------------------------------------------------------------------
@@ -141,12 +145,12 @@ class PlexClient:
             last_watched=self._safe_date(movie, "lastViewedAt"),
             added_at=self._safe_date(movie, "addedAt"),
             library_section=section_title,
+            rating_key=getattr(movie, "ratingKey", None),
         )
 
     def _show_to_item(self, show: Show, section_title: str) -> MediaItem:
         seasons = getattr(show, "childCount", None)
         episodes = getattr(show, "leafCount", None)
-        # Use average episode duration × episodes as rough total, or None
         ep_dur = self._safe_minutes(getattr(show, "duration", None))
         return MediaItem(
             key=show.key,
@@ -170,4 +174,5 @@ class PlexClient:
             library_section=section_title,
             seasons=seasons,
             episodes=episodes,
+            rating_key=getattr(show, "ratingKey", None),
         )

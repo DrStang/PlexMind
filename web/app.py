@@ -5,13 +5,15 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from ai.concierge import Concierge
+from cache.store import LibraryCache
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -107,3 +109,60 @@ async def library_sync():
 @app.get("/health")
 async def health():
     return {"status": "ok", "items": concierge.item_count}
+
+
+# ------------------------------------------------------------------
+# Plex deep-link integration
+# ------------------------------------------------------------------
+
+@app.get("/plex/server")
+async def plex_server_info():
+    """Return the Plex machine identifier so the frontend can build deep-links."""
+    try:
+        from plex.client import PlexClient
+        client = PlexClient()
+        return {
+            "machine_id": client.machine_identifier,
+            "server_name": client.server_name,
+            "plex_url": Config.PLEX_URL,
+        }
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+
+@app.get("/plex/artwork/{rating_key}")
+async def plex_artwork(rating_key: int, w: int = 300, h: int = 450):
+    """
+    Proxy artwork from Plex so the browser never needs the raw token.
+    Caches the image in-memory for 1 hour (via Cache-Control).
+    """
+    if not Config.PLEX_TOKEN:
+        return Response(status_code=404)
+    url = (
+        f"{Config.PLEX_URL}/photo/:/transcode"
+        f"?url=/library/metadata/{rating_key}/thumb"
+        f"&width={w}&height={h}&minSize=1"
+        f"&X-Plex-Token={Config.PLEX_TOKEN}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                return Response(
+                    content=resp.content,
+                    media_type=resp.headers.get("content-type", "image/jpeg"),
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+    except Exception as exc:
+        logger.debug("Artwork fetch failed for %d: %s", rating_key, exc)
+    return Response(status_code=404)
+
+
+@app.get("/library/titles")
+async def library_titles():
+    """
+    Return a compact title→metadata map for the frontend to use when
+    post-processing AI responses and rendering 'Open in Plex' cards.
+    """
+    cache = LibraryCache()
+    return JSONResponse(cache.get_title_map())

@@ -255,6 +255,70 @@
   }
   .suggestion:hover { border-color: var(--accent); color: var(--text); }
 
+  /* ── Media cards (Plex deep-link) ── */
+  .media-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .media-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    width: 130px;
+    flex-shrink: 0;
+    transition: border-color 0.15s, transform 0.15s;
+    cursor: pointer;
+    text-decoration: none;
+    display: block;
+    color: inherit;
+  }
+  .media-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .media-card-poster {
+    width: 100%;
+    height: 195px;
+    object-fit: cover;
+    background: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+  }
+  .media-card-poster img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .media-card-info {
+    padding: 7px 8px;
+  }
+  .media-card-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .media-card-meta {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .media-card-badge {
+    display: inline-block;
+    font-size: 0.6rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-top: 3px;
+    font-weight: 600;
+  }
+  .badge-watched { background: #1a3a1a; color: #6be06b; }
+  .badge-unwatched { background: #1a2a3a; color: #6aabdf; }
+
   /* ── Sync toast ── */
   #toast {
     position: fixed;
@@ -356,6 +420,91 @@ function renderMarkdown(text) {
     // line breaks → paragraphs
     .replace(/\n\n+/g, '</p><p>')
     .replace(/\n/g, '<br>');
+}
+
+// ── Plex integration state ────────────────────────────────────────────
+let titleMap = {};      // title_lower → {title, year, media_type, watched, thumb_url, rating_key}
+let plexMachineId = ''; // Plex server machine identifier
+
+async function loadPlexIntegration() {
+  try {
+    const [titlesResp, serverResp] = await Promise.all([
+      fetch('/library/titles'),
+      fetch('/plex/server'),
+    ]);
+    if (titlesResp.ok) titleMap = await titlesResp.json();
+    if (serverResp.ok) {
+      const s = await serverResp.json();
+      plexMachineId = s.machine_id || '';
+    }
+  } catch (e) { /* Plex integration optional */ }
+}
+
+function plexDeepLink(ratingKey) {
+  if (!ratingKey) return null;
+  if (plexMachineId) {
+    return `https://app.plex.tv/desktop/#!/server/${plexMachineId}/details?key=/library/metadata/${ratingKey}`;
+  }
+  return null;
+}
+
+function buildMediaCards(mentionedTitles) {
+  const found = [];
+  for (const raw of mentionedTitles) {
+    const item = titleMap[raw.toLowerCase()];
+    if (item && item.rating_key) found.push(item);
+  }
+  if (!found.length) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'media-cards';
+
+  for (const item of found) {
+    const link = plexDeepLink(item.rating_key);
+    const card = document.createElement(link ? 'a' : 'div');
+    card.className = 'media-card';
+    if (link) { card.href = link; card.target = '_blank'; card.rel = 'noopener'; }
+
+    const poster = document.createElement('div');
+    poster.className = 'media-card-poster';
+    if (item.rating_key) {
+      const img = document.createElement('img');
+      img.src = `/plex/artwork/${item.rating_key}?w=260&h=390`;
+      img.alt = item.title;
+      img.onerror = () => { poster.textContent = item.media_type === 'show' ? '📺' : '🎬'; };
+      poster.appendChild(img);
+    } else {
+      poster.textContent = item.media_type === 'show' ? '📺' : '🎬';
+    }
+
+    const info = document.createElement('div');
+    info.className = 'media-card-info';
+    info.innerHTML = `
+      <div class="media-card-title">${item.title}</div>
+      <div class="media-card-meta">${item.year || ''}</div>
+      <span class="media-card-badge ${item.watched ? 'badge-watched' : 'badge-unwatched'}">
+        ${item.watched ? '✓ Watched' : '● New'}
+      </span>`;
+
+    card.appendChild(poster);
+    card.appendChild(info);
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
+function extractBoldTitles(text) {
+  const titles = [];
+  const re = /\*\*([^*]+)\*\*/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const t = m[1].trim();
+    // Only include if it looks like a title (not a header/label: no colon, reasonable length)
+    if (t.length > 1 && t.length < 80 && !t.endsWith(':')) {
+      titles.push(t);
+    }
+  }
+  return [...new Set(titles)];
 }
 
 // ── Chat state ────────────────────────────────────────────────────────
@@ -471,6 +620,16 @@ async function sendMessage() {
         chat.scrollTop = chat.scrollHeight;
       }
     }
+
+    // Post-process: extract bold titles from the response and render cards
+    const titles = extractBoldTitles(rawText);
+    if (titles.length) {
+      const cards = buildMediaCards(titles);
+      if (cards) {
+        bubble.appendChild(cards);
+        chat.scrollTop = chat.scrollHeight;
+      }
+    }
   } catch (err) {
     hideTyping();
     appendMessage('bot', `⚠️ Error: ${err.message}`);
@@ -496,6 +655,7 @@ async function syncLibrary() {
     if (data.status === 'ok') {
       showToast(`✓ Synced ${data.items} items from Plex`);
       updateLibraryStatus();
+      loadPlexIntegration(); // refresh title map with new data
     } else {
       showToast(`⚠️ ${data.detail}`);
     }
@@ -525,8 +685,9 @@ async function updateLibraryStatus() {
   }
 }
 
-// Check library status on page load
+// Check library status and load Plex integration on page load
 updateLibraryStatus();
+loadPlexIntegration();
 
 function showToast(msg) {
   const t = document.getElementById('toast');

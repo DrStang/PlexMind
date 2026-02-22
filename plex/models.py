@@ -27,6 +27,8 @@ class MediaItem:
     # TV-specific
     seasons: Optional[int] = None
     episodes: Optional[int] = None
+    # Plex internal numeric ID — used to build deep-links and artwork URLs
+    rating_key: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +53,7 @@ class MediaItem:
             "library_section": self.library_section,
             "seasons": self.seasons,
             "episodes": self.episodes,
+            "rating_key": self.rating_key,
         }
 
     def to_llm_summary(self) -> str:

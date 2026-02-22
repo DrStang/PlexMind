@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS media_items (
     library_section TEXT,
     seasons      INTEGER,
     episodes     INTEGER,
-    cached_at    TEXT NOT NULL
+    cached_at    TEXT NOT NULL,
+    rating_key   INTEGER
 )
 """
 
@@ -46,6 +47,11 @@ CREATE TABLE IF NOT EXISTS cache_meta (
     synced_at TEXT NOT NULL
 )
 """
+
+# Applied to existing DBs that predate the column — safe to run repeatedly
+_MIGRATIONS = [
+    "ALTER TABLE media_items ADD COLUMN rating_key INTEGER",
+]
 
 
 class LibraryCache:
@@ -64,6 +70,13 @@ class LibraryCache:
         with self._con:
             self._con.execute(_CREATE_ITEMS)
             self._con.execute(_CREATE_META)
+        # Apply any missing columns to pre-existing databases
+        for stmt in _MIGRATIONS:
+            try:
+                with self._con:
+                    self._con.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     # ------------------------------------------------------------------
     # Write
@@ -75,7 +88,7 @@ class LibraryCache:
         with self._con:
             self._con.executemany(
                 """INSERT OR REPLACE INTO media_items VALUES
-                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows,
             )
             self._con.execute(
@@ -103,6 +116,23 @@ class LibraryCache:
             return True
         age = datetime.now(timezone.utc) - last
         return age > timedelta(hours=ttl_hours)
+
+    def get_title_map(self) -> dict:
+        """Return {title_lower: {rating_key, thumb_url, title, year, media_type, watched}} for all items."""
+        cur = self._con.execute(
+            "SELECT title, year, media_type, watched, thumb_url, rating_key FROM media_items"
+        )
+        result = {}
+        for row in cur.fetchall():
+            result[row["title"].lower()] = {
+                "title": row["title"],
+                "year": row["year"],
+                "media_type": row["media_type"],
+                "watched": bool(row["watched"]),
+                "thumb_url": row["thumb_url"],
+                "rating_key": row["rating_key"] if "rating_key" in row.keys() else None,
+            }
+        return result
 
     def item_count(self) -> int:
         row = self._con.execute("SELECT COUNT(*) as n FROM media_items").fetchone()
@@ -143,6 +173,7 @@ class LibraryCache:
             item.seasons,
             item.episodes,
             now,
+            item.rating_key,
         )
 
     @staticmethod
@@ -172,4 +203,5 @@ class LibraryCache:
             library_section=row["library_section"],
             seasons=row["seasons"],
             episodes=row["episodes"],
+            rating_key=row["rating_key"] if "rating_key" in row.keys() else None,
         )
