@@ -105,6 +105,12 @@ def filter_library(
     violate explicit filters (duration, watch status, media type).
     Return the top max_results by score.
 
+    Person-name queries (e.g. "Nolan marathon", "Tom Hanks movies") use a
+    two-pass strategy: all items that match a named person are always
+    included regardless of rank, and remaining slots are filled with the
+    top-scored others.  This prevents a large library from burying the
+    director/actor the user explicitly asked about.
+
     watch_overlay — optional per-user dict {rating_key: {watched, watch_count}}
     that overrides the shared library's watched state with the signed-in
     user's actual view history.
@@ -113,6 +119,7 @@ def filter_library(
         return []
 
     q = query.lower()
+    query_words = set(re.findall(r"\w+", q))
 
     def _watched(item: MediaItem) -> bool:
         """Resolve watched status: user overlay takes priority over shared cache."""
@@ -134,7 +141,19 @@ def filter_library(
         if mood in q:
             target_genres.update(g.lower() for g in genres)
 
-    query_words = set(re.findall(r"\w+", q))
+    # ── Pass 1: identify items whose director/actor is named in the query ──
+    # We do this before scoring so person-matched items are always returned.
+    person_match_keys: set[str] = set()
+    for item in items:
+        for person in item.directors + item.actors:
+            person_lc = person.lower()
+            if person_lc in q:
+                person_match_keys.add(item.key)
+                break
+            last = person_lc.split()[-1] if person_lc.split() else ""
+            if last and len(last) > 3 and last in query_words:
+                person_match_keys.add(item.key)
+                break
 
     scored: list[tuple[float, MediaItem]] = []
 
@@ -156,23 +175,21 @@ def filter_library(
         # ── Scoring ──────────────────────────────────────────────────
         score: float = 0.0
 
-        # Genre match (most important signal)
+        # Genre match
         item_genres_lc = {g.lower() for g in item.genres}
         genre_hits = len(item_genres_lc & target_genres)
         score += genre_hits * 12
 
-        # Title words appear in query (catches "like Oppenheimer", "Nolan" etc.)
+        # Title words appear in query (catches "like Oppenheimer" etc.)
         title_words = set(re.findall(r"\w+", item.title.lower()))
         score += len(title_words & query_words) * 10
 
         # Person mentions (director / actor named in query)
         for person in item.directors + item.actors:
             person_lc = person.lower()
-            # Full name match
             if person_lc in q:
                 score += 15
             else:
-                # Last-name match
                 last = person_lc.split()[-1] if person_lc.split() else ""
                 if last and len(last) > 3 and last in query_words:
                     score += 8
@@ -181,13 +198,23 @@ def filter_library(
         if not want_watched and not item_watched:
             score += 4
 
-        # Rating bonus (0–10 → adds up to 10 points)
+        # Rating bonus
         score += (item.rating or 0)
 
         scored.append((score, item))
 
     # Sort by score desc, break ties by rating
     scored.sort(key=lambda x: (x[0], x[1].rating or 0), reverse=True)
+
+    # ── Pass 2: guarantee person-matched items appear in results ──────────
+    # Extract person-matched items (already sorted by score from above),
+    # then fill remaining slots up to max_results with top-scored others.
+    if person_match_keys:
+        person_items = [item for _, item in scored if item.key in person_match_keys]
+        other_items  = [item for _, item in scored if item.key not in person_match_keys]
+        fill = max(0, max_results - len(person_items))
+        return (person_items + other_items[:fill])[:max_results]
+
     return [item for _, item in scored[:max_results]]
 
 
