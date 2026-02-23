@@ -182,20 +182,18 @@ async def plex_server_info():
 
 
 @app.get("/plex/artwork/{rating_key}")
-async def plex_artwork(rating_key: int):
-    """
-    Proxy poster thumbnail from Plex.
-    Uses the direct /library/metadata/{id}/thumb endpoint (no transcode),
-    which is simpler and works without Plex Pass.
-    """
+async def plex_artwork(rating_key: int, w: int = 300, h: int = 450):
+    """Proxy artwork from Plex — auth token never leaves the server."""
     if not Config.PLEX_TOKEN:
         return Response(status_code=404)
     url = (
-        f"{Config.PLEX_URL}/library/metadata/{rating_key}/thumb"
-        f"?X-Plex-Token={Config.PLEX_TOKEN}"
+        f"{Config.PLEX_URL}/photo/:/transcode"
+        f"?url=/library/metadata/{rating_key}/thumb"
+        f"&width={w}&height={h}&minSize=1"
+        f"&X-Plex-Token={Config.PLEX_TOKEN}"
     )
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return Response(
