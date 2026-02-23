@@ -527,7 +527,15 @@ async function plexSignIn() {
           popup?.close();
           currentUser = pd;
           updateUserUI(pd);
-          showToast(`✓ Signed in as ${pd.username} — personalising your recommendations…`);
+          showToast(`✓ Signed in as ${pd.username} — loading your watch history…`);
+          // Fetch watch overlay in a SEPARATE request after the session cookie
+          // is fully written — avoids any race with the cookie write
+          fetch('/auth/overlay', { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+              if (d.status === 'ok') showToast(`✓ Personalised — ${d.items} titles tracked`);
+            })
+            .catch(() => {});
           // Refresh title map (watched status may now differ per-user)
           await loadPlexIntegration();
         }
