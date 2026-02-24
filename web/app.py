@@ -162,6 +162,54 @@ async def health():
     return {"status": "ok", "items": concierge.item_count}
 
 
+@app.get("/library/debug")
+async def library_debug(q: str = "", n: int = 10):
+    """
+    Diagnostic endpoint.  Without ?q= returns a sample of stored director
+    data so you can verify the DB has person metadata.  With ?q=<query>
+    returns the candidates that would be sent to the LLM.
+    """
+    cache = LibraryCache()
+    all_items = cache.get_all_items()
+
+    movies = [i for i in all_items if i.media_type == "movie"]
+    sample = [
+        {
+            "title":     item.title,
+            "year":      item.year,
+            "directors": item.directors,
+            "actors":    item.actors[:3],
+            "rating":    item.rating,
+            "watched":   item.watched,
+        }
+        for item in movies[:n]
+    ]
+
+    result: dict = {
+        "total_items":  len(all_items),
+        "total_movies": len(movies),
+        "director_sample": sample,
+    }
+
+    if q:
+        from ai.filter import filter_library
+        candidates = filter_library(all_items, q, max_results=50)
+        result["query"] = q
+        result["candidate_count"] = len(candidates)
+        result["candidates"] = [
+            {
+                "title":     item.title,
+                "year":      item.year,
+                "directors": item.directors,
+                "rating":    item.rating,
+                "watched":   item.watched,
+            }
+            for item in candidates
+        ]
+
+    return JSONResponse(result)
+
+
 # ------------------------------------------------------------------
 # Plex artwork proxy + server info
 # ------------------------------------------------------------------
